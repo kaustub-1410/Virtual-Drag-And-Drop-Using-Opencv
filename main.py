@@ -3,71 +3,76 @@ from cvzone.HandTrackingModule import HandDetector
 import cvzone
 import numpy as np
 
+# Initialize Webcam
 cap = cv2.VideoCapture(0)
-cap.set(3, 1280)
-cap.set(4, 720)
-detector = HandDetector(detectionCon=0.8)
-colorR = (255, 0, 255)
+cap.set(3, 1280)  # Width
+cap.set(4, 720)   # Height
 
-cx, cy, w, h = 100, 100, 200, 200
+# Initialize Hand Detector
+detector = HandDetector(detectionCon=0.8, maxHands=1)  # Detect up to 1 hand
+colorR = (255, 0, 255)  # Rectangle color
 
-
-class DragRect():
-    def __init__(self, posCenter, size=[200, 200]):
-        self.posCenter = posCenter
+# Drag Rectangle Class
+class DragRect:
+    def __init__(self, posCenter, size=(200, 200)):
+        self.posCenter = list(posCenter)
         self.size = size
+        self.dragging = False  # Added dragging state
 
-    def update(self, cursor):
+    def update(self, cursor, fingers):
         cx, cy = self.posCenter
         w, h = self.size
 
-        # If the index finger tip is in the rectangle region
-        if cx - w // 2 < cursor[0] < cx + w // 2 and \
-                cy - h // 2 < cursor[1] < cy + h // 2:
-            self.posCenter = cursor
+        # If index finger is inside rectangle and middle finger is close, start dragging
+        if cx - w // 2 < cursor[0] < cx + w // 2 and cy - h // 2 < cursor[1] < cy + h // 2:
+            if fingers[1] == 1 and fingers[2] == 0:  # Index up, middle down (grabbing)
+                self.dragging = True
 
+        # Update position if dragging
+        if self.dragging:
+            self.posCenter = list(cursor)
 
-rectList = []
-for x in range(5):
-    rectList.append(DragRect([x * 250 + 150, 150]))
+        # Release dragging if fingers open
+        if fingers[1] == 1 and fingers[2] == 1:  # Both index and middle up (release)
+            self.dragging = False
+
+# Create Multiple Draggable Rectangles
+rectList = [DragRect((x * 250 + 150, 150)) for x in range(3)]  # 3 Rectangles
 
 while True:
     success, img = cap.read()
-    img = cv2.flip(img, 1)
-    img = detector.findHands(img)
-    lmList, _ = detector.findPosition(img)
+    if not success:
+        continue
+    img = cv2.flip(img, 1)  # Flip for mirror effect
 
-    if lmList:
+    # Detect Hands
+    hands, img = detector.findHands(img, draw=True)  # ✅ Correct function
+    if hands:
+        for hand in hands:
+            lmList = hand["lmList"]  # ✅ Get landmarks
+            fingers = detector.fingersUp(hand)  # ✅ Detect which fingers are up
 
-        l, _, _ = detector.findDistance(8, 12, img, draw=False)
-        print(l)
-        if l < 30:
-            cursor = lmList[8]  # index finger tip landmark
-            # call the update here
-            for rect in rectList:
-                rect.update(cursor)
+            if len(lmList) >= 12:  # Ensure valid hand detection
+                cursor = lmList[8][:2]  # Index finger tip position
 
-    ## Draw solid
-    # for rect in rectList:
-    #     cx, cy = rect.posCenter
-    #     w, h = rect.size
-    #     cv2.rectangle(img, (cx - w // 2, cy - h // 2),
-    #                   (cx + w // 2, cy + h // 2), colorR, cv2.FILLED)
-    #     cvzone.cornerRect(img, (cx - w // 2, cy - h // 2, w, h), 20, rt=0)
+                for rect in rectList:
+                    rect.update(cursor, fingers)
 
-    ## Draw Transperency
+    # Transparent Layer for Rectangles
     imgNew = np.zeros_like(img, np.uint8)
     for rect in rectList:
         cx, cy = rect.posCenter
         w, h = rect.size
-        cv2.rectangle(imgNew, (cx - w // 2, cy - h // 2),
-                      (cx + w // 2, cy + h // 2), colorR, cv2.FILLED)
+        cv2.rectangle(imgNew, (cx - w // 2, cy - h // 2), (cx + w // 2, cy + h // 2), colorR, cv2.FILLED)
         cvzone.cornerRect(imgNew, (cx - w // 2, cy - h // 2, w, h), 20, rt=0)
 
-    out = img.copy()
-    alpha = 0.5
-    mask = imgNew.astype(bool)
-    out[mask] = cv2.addWeighted(img, alpha, imgNew, 1 - alpha, 0)[mask]
+    # Overlay Transparent Layer
+    out = cv2.addWeighted(img, 0.5, imgNew, 0.5, 0)
 
-    cv2.imshow("Image", out)
-    cv2.waitKey(1)
+    # Display the Output
+    cv2.imshow("Virtual Drag & Drop", out)
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+cap.release()
+cv2.destroyAllWindows()
